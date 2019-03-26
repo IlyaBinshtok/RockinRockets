@@ -74,7 +74,10 @@ def button_event(pin):
     global offTimer
     global emsType
     currentTime = time.time()
-    if buttonEventTime > 0:
+    buttonInput = pibrella.button.read()
+    logMessage("button-input={}".format(buttonInput))
+    #if buttonEventTime > 0:
+    if buttonInput == 0:
         #button released
         logMessage("button_event() :: button released in {} sec.".format(currentTime - buttonEventTime))
         if onTimer is not None:
