@@ -3,6 +3,7 @@
 import sys, os, time, signal, pibrella, threading, bluetooth
 from globalvars import enum, logfile
 from logutils import logMessage
+from btscan import BluetoothScan
 from btconnection import BluetoothConnection
 from ledutils import driveLEDs, ledGreeting
 from config import RockinPiConfig
@@ -17,35 +18,50 @@ buttonEventTime = 0
 systemOn = False
 onTimer = None
 offTimer = None
+ignoreButtonEvent = False
+btConnections = []
 
 def worker():
     while systemOn:
         if emsType is EmsType.INTERFERANCE:
-            btConnection.send(EmsOutType.INTERFERANCE)
+            for btConnection in btConnections:
+                btConnection.send(EmsOutType.INTERFERANCE)
         elif emsType is EmsType.RUSSIAN:
-            btConnection.send(EmsOutType.RUSSIAN)
+            for btConnection in btConnections:
+                btConnection.send(EmsOutType.RUSSIAN)
         else:
-            btConnection.send(EmsOutType.OFF)
+            for btConnection in btConnections:
+                btConnection.send(EmsOutType.OFF)
         time.sleep(config.getWorkerSleepTime())
 
 def turnOn():
     global systemOn
     global onTimer
     global emsType
-    global btConnection
     global workerThread
+    global btConnections
+    if systemOn:
+        logMessage("turnOn() :: system is already ON")
+        return
     logMessage("turnOn() :: Turning ON ...")
     driveLEDs(False, False, True)
-    onTimer.cancel()
-    onTimer = None
+    if onTimer is not None:
+        onTimer.cancel()
+        onTimer = None
     systemOn = True
     emsType = EmsType.NA
     try:
-        btConnection = BluetoothConnection(config.getBluetoothDeviceAddress(), config.getBluetoothPort())
-        btConnection.connect()
+        pibrella.light.green.blink(0.5, 0.5)
+        btDevices = BluetoothScan(config.getBluetoothDevices()).discover()
+        logMessage("turnOn() :: btDevices={}".format(btDevices))
+        for btDevice in btDevices: 
+            btConnection = BluetoothConnection(btDevice, config.getBluetoothPort())
+            btConnection.connect()
+            btConnections.append(btConnection)
+            logMessage("turnOn() :: BT connection to {} is ON !!!".format(btDevice))
         workerThread = threading.Thread(target=worker)
         workerThread.start()
-        logMessage("turnOn() :: BT connection is ON !!!")
+        driveLEDs(False, False, True)
     except bluetooth.btcommon.BluetoothError as e:
         pibrella.light.amber.blink(0.5,0.5)
         pibrella.light.green.blink(0.5,0.5)
@@ -56,26 +72,41 @@ def turnOff():
     global offTimer
     global emsType
     global workerThread
+    global ignoreButtonEvent
+    global btConnections
+    if not systemOn:
+        logMessage("turnOff() :: system is already OFF")
+        return
     logMessage("turnOff() :: turning OFF ...")
+    ignoreButtonEvent = True
     driveLEDs(False, False, False)
-    offTimer.cancel()
-    offTimer = None
+    if offTimer is not None:
+        offTimer.cancel()
+        offTimer = None
     emsType = EmsType.NA
     pibrella.light.red.blink(1,1)
     time.sleep(3*config.getWorkerSleepTime())
     driveLEDs(False, False, False)
     systemOn = False;
-    btConnection.disconnect()
-    logMessage("turnOff() :: BT connection is OFF !!!")
+    for btConnection in btConnections:
+        btConnection.disconnect()
+        btConnections.remove(btConnection)
+        logMessage("turnOff() :: BT connection to {} is OFF !!!".format(btConnection.getAddress()))
+    ignoreButtonEvent = False
 
 def button_event(pin):
     global buttonEventTime
     global onTimer
     global offTimer
     global emsType
+    global ignoreButtonEvent
+    if ignoreButtonEvent:
+        logMessage("button_event() :: ignoring this button event")
+        return
+    ignoreButtonEvent = True
     currentTime = time.time()
     buttonInput = pibrella.button.read()
-    logMessage("button-input={}".format(buttonInput))
+    logMessage("button_event() :: button-input={}".format(buttonInput))
     #if buttonEventTime > 0:
     if buttonInput == 0:
         #button released
@@ -112,12 +143,13 @@ def button_event(pin):
         else:
             onTimer = threading.Timer(5.0, turnOn)
             onTimer.start()
+    ignoreButtonEvent = False
 
 f = open(logfile, "w")
 f.close()
 config = RockinPiConfig(configFile)
 logMessage("Starting rockinPi ...")
-logMessage("config :: BT device address={}".format(config.getBluetoothDeviceAddress()))
+logMessage("config :: BT device address={}".format(config.getBluetoothDevices()))
 logMessage("config :: BT port={}".format(config.getBluetoothPort()))
 logMessage("config :: worker thread sleep time: {} sec.".format(config.getWorkerSleepTime()))
 ledGreeting()

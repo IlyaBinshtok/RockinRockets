@@ -7,8 +7,8 @@ class RockinPiConfig:
         with open(filename, 'r') as f:
             self.datastore = json.load(f)
 
-    def getBluetoothDeviceAddress(self):
-        return self.datastore['bluetooth.device.address']
+    def getBluetoothDevices(self):
+        return self.datastore['bluetooth.devices']
 
     def getBluetoothPort(self):
         return int(self.datastore['bluetooth.port'])
