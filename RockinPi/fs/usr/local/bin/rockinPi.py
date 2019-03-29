@@ -20,17 +20,21 @@ onTimer = None
 offTimer = None
 ignoreButtonEvent = False
 btConnections = []
+prevButtonInput = 0
 
 def worker():
     while systemOn:
         if emsType is EmsType.INTERFERANCE:
             for btConnection in btConnections:
+                # logMessage("worker() :: sending 'INTERFERANCE' EMS command to {} HC05 device".format(btConnection.getAddress()))
                 btConnection.send(EmsOutType.INTERFERANCE)
         elif emsType is EmsType.RUSSIAN:
             for btConnection in btConnections:
+                # logMessage("worker() :: sending 'RUSSIAN' EMS command to {} HC05 device".format(btConnection.getAddress()))
                 btConnection.send(EmsOutType.RUSSIAN)
         else:
             for btConnection in btConnections:
+                # logMessage("worker() :: sending 'OFF' command to {} HC05 device".format(btConnection.getAddress()))
                 btConnection.send(EmsOutType.OFF)
         time.sleep(config.getWorkerSleepTime())
 
@@ -40,6 +44,7 @@ def turnOn():
     global emsType
     global workerThread
     global btConnections
+    global ignoreButtonEvent
     if systemOn:
         logMessage("turnOn() :: system is already ON")
         return
@@ -50,22 +55,26 @@ def turnOn():
         onTimer = None
     systemOn = True
     emsType = EmsType.NA
+    ignoreButtonEvent = True
     try:
         pibrella.light.green.blink(0.5, 0.5)
+        logMessage("turnOn() :: discovering HC05 devices ...")
         btDevices = BluetoothScan(config.getBluetoothDevices()).discover()
-        logMessage("turnOn() :: btDevices={}".format(btDevices))
-        for btDevice in btDevices: 
+        logMessage("turnOn() :: discovered HC05 devices: {}".format(btDevices))
+        for btDevice in btDevices:
+            logMessage("turnOn() :: connecting to {} HC05 device".format(btDevice))
             btConnection = BluetoothConnection(btDevice, config.getBluetoothPort())
             btConnection.connect()
             btConnections.append(btConnection)
-            logMessage("turnOn() :: BT connection to {} is ON !!!".format(btDevice))
+            logMessage("turnOn() :: BT connection to {} HC05 device is ON !!!".format(btDevice))
         workerThread = threading.Thread(target=worker)
         workerThread.start()
         driveLEDs(False, False, True)
     except bluetooth.btcommon.BluetoothError as e:
         pibrella.light.amber.blink(0.5,0.5)
         pibrella.light.green.blink(0.5,0.5)
-        logMessage("turnOn() :: BT Exception: {}".format(e)) 
+        logMessage("turnOn() :: BT Exception: {}".format(e))
+    ignoreButtonEvent = False
 
 def turnOff():
     global systemOn
@@ -74,6 +83,7 @@ def turnOff():
     global workerThread
     global ignoreButtonEvent
     global btConnections
+    global prevButtonInput
     if not systemOn:
         logMessage("turnOff() :: system is already OFF")
         return
@@ -89,10 +99,15 @@ def turnOff():
     driveLEDs(False, False, False)
     systemOn = False;
     for btConnection in btConnections:
-        btConnection.disconnect()
-        btConnections.remove(btConnection)
-        logMessage("turnOff() :: BT connection to {} is OFF !!!".format(btConnection.getAddress()))
+        logMessage("turnOff() :: disconnecting from {} HC05 device".format(btConnection.getAddress()))
+        try:
+            btConnection.disconnect()
+            logMessage("turnOff() :: BT connection to {} HC05 device is OFF !!!".format(btConnection.getAddress()))
+        except bluetooth.btcommon.BluetoothError as e:
+            logMessage("turnOff() :: BT Exception: {}".format(e))
+    btConnections = []
     ignoreButtonEvent = False
+    prevButtonInput = 0
 
 def button_event(pin):
     global buttonEventTime
@@ -100,6 +115,7 @@ def button_event(pin):
     global offTimer
     global emsType
     global ignoreButtonEvent
+    global prevButtonInput
     if ignoreButtonEvent:
         logMessage("button_event() :: ignoring this button event")
         return
@@ -107,7 +123,10 @@ def button_event(pin):
     currentTime = time.time()
     buttonInput = pibrella.button.read()
     logMessage("button_event() :: button-input={}".format(buttonInput))
-    #if buttonEventTime > 0:
+    if buttonInput == 1 and buttonInput == prevButtonInput:
+        logMessage("button_event() :: both current and previous button inputs are {} assuming that button is released ...".format(buttonInput))
+        buttonInput = 0;
+    #if buttonEventTime > 0
     if buttonInput == 0:
         #button released
         logMessage("button_event() :: button released in {} sec.".format(currentTime - buttonEventTime))
@@ -143,6 +162,7 @@ def button_event(pin):
         else:
             onTimer = threading.Timer(5.0, turnOn)
             onTimer.start()
+    prevButtonInput = buttonInput
     ignoreButtonEvent = False
 
 f = open(logfile, "w")
